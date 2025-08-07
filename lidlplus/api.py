@@ -218,16 +218,7 @@ class LidlPlusApi:
         wait.until(expected_conditions.element_to_be_clickable((By.NAME, "input-email"))).send_keys(phone)
         wait.until(expected_conditions.element_to_be_clickable((By.NAME, "Password"))).send_keys(password)
         self._click(browser, (By.XPATH, '//*[@id="duple-button-block"]/button'))
-        # wait.until(expected_conditions.visibility_of_element_located((By.ID, "button_welcome_login"))).click()
-        # wait.until(expected_conditions.visibility_of_element_located((By.NAME, "EmailOrPhone"))).send_keys(phone)
-        # self._click(browser, (By.ID, "button_btn_submit_email"))
-        # self._click(
-        #     browser,
-        #     (By.ID, "button_btn_submit_email"),
-        #     request=f"{self._AUTH_API}/api/phone/exists.*",
-        # )
-        # wait.until(expected_conditions.element_to_be_clickable((By.ID, "field_Password"))).send_keys(password)
-        # self._click(browser, (By.ID, "button_submit"))
+
         self._check_login_error(browser)
         self._check_2fa_auth(
             browser,
@@ -238,6 +229,7 @@ class LidlPlusApi:
         browser.wait_for_request(f"{self._AUTH_API}/connect.*")
         code = self._parse_code(browser, wait, accept_legal_terms=kwargs.get("accept_legal_terms", True))
         self._authorization_code(code)
+        browser.close()
 
     def _default_headers(self):
         if (not self._token and self._refresh_token):
