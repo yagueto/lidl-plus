@@ -30,8 +30,13 @@ try:
     from webdriver_manager.chrome import ChromeDriverManager
     from webdriver_manager.firefox import GeckoDriverManager
     from webdriver_manager.core.os_manager import ChromeType
-except ImportError:
-    pass
+except ImportError as e:
+    if e.__traceback__ is not None:
+        line_no = e.__traceback__.tb_lineno
+    else:
+        line_no = "unknown"
+    logging.error(f"ImportError: {type(e).__name__} at line {line_no}: {e}")
+
 
 
 class LidlPlusApi:
@@ -102,15 +107,10 @@ class LidlPlusApi:
         user_agent = UserAgent(self._OS.lower()).Random()
         logging.getLogger("WDM").setLevel(logging.NOTSET)
         options = webdriver.FirefoxOptions()
-        if headless:
-            options.headless = True
         profile = webdriver.FirefoxProfile()
         profile.set_preference("general.useragent.override", user_agent)
         return webdriver.Firefox(
-            executable_path=GeckoDriverManager().install(),
-            firefox_binary="/usr/bin/firefox",
             options=options,
-            firefox_profile=profile,
         )
 
     def _get_browser(self, headless=True):
@@ -205,7 +205,7 @@ class LidlPlusApi:
         if "/connect/authorize/callback" not in response.headers.get("Location"):
             element = wait.until(expected_conditions.visibility_of_element_located((By.CLASS_NAME, verify_mode)))
             element.find_element(By.TAG_NAME, "button").click()
-            verify_code = verify_token_func()
+            verify_code = verify_token_func() # type: ignore
             browser.find_element(By.NAME, "VerificationCode").send_keys(verify_code)
             self._click(browser, (By.CLASS_NAME, "role_next"))
 
@@ -213,17 +213,21 @@ class LidlPlusApi:
         """Simulate app auth"""
         browser = self._get_browser(headless=kwargs.get("headless", True))
         browser.get(self._register_link)
-        wait = WebDriverWait(browser, 10)
-        wait.until(expected_conditions.visibility_of_element_located((By.ID, "button_welcome_login"))).click()
-        wait.until(expected_conditions.visibility_of_element_located((By.NAME, "EmailOrPhone"))).send_keys(phone)
-        self._click(browser, (By.ID, "button_btn_submit_email"))
-        self._click(
-            browser,
-            (By.ID, "button_btn_submit_email"),
-            request=f"{self._AUTH_API}/api/phone/exists.*",
-        )
-        wait.until(expected_conditions.element_to_be_clickable((By.ID, "field_Password"))).send_keys(password)
-        self._click(browser, (By.ID, "button_submit"))
+        wait = WebDriverWait(browser, 15)
+        wait.until(expected_conditions.visibility_of_element_located((By.XPATH, '//*[@id="duple-button-block"]/button[1]/span'))).click()
+        wait.until(expected_conditions.element_to_be_clickable((By.NAME, "input-email"))).send_keys(phone)
+        wait.until(expected_conditions.element_to_be_clickable((By.NAME, "Password"))).send_keys(password)
+        self._click(browser, (By.XPATH, '//*[@id="duple-button-block"]/button'))
+        # wait.until(expected_conditions.visibility_of_element_located((By.ID, "button_welcome_login"))).click()
+        # wait.until(expected_conditions.visibility_of_element_located((By.NAME, "EmailOrPhone"))).send_keys(phone)
+        # self._click(browser, (By.ID, "button_btn_submit_email"))
+        # self._click(
+        #     browser,
+        #     (By.ID, "button_btn_submit_email"),
+        #     request=f"{self._AUTH_API}/api/phone/exists.*",
+        # )
+        # wait.until(expected_conditions.element_to_be_clickable((By.ID, "field_Password"))).send_keys(password)
+        # self._click(browser, (By.ID, "button_submit"))
         self._check_login_error(browser)
         self._check_2fa_auth(
             browser,
@@ -236,7 +240,7 @@ class LidlPlusApi:
         self._authorization_code(code)
 
     def _default_headers(self):
-        if (not self._token and self._refresh_token) or datetime.utcnow() >= self._expires:
+        if (not self._token and self._refresh_token):
             self._renew_token()
         if not self._token:
             raise MissingLogin("You need to login!")
@@ -268,7 +272,7 @@ class LidlPlusApi:
     def ticket(self, ticket_id):
         """Get full data of single ticket by id"""
         kwargs = {"headers": self._default_headers(), "timeout": self._TIMEOUT}
-        url = f"{self._TICKET_API}/{self._country}/tickets"
+        url = f"https://tickets.lidlplus.com/api/v3/{self._country}/tickets"
         return requests.get(f"{url}/{ticket_id}", **kwargs).json()
 
     def coupon_promotions_v1(self):

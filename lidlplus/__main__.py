@@ -84,7 +84,7 @@ def lidl_plus_login(args):
     country = args.get("country") or input("Enter your country (DE, AT, ...): ")
     if args.get("refresh_token"):
         return LidlPlusApi(language, country, args.get("refresh_token"))
-    username = args.get("user") or input("Enter your lidl plus username (phone number): ")
+    username = args.get("user") or input("Enter your lidl plus username (email): ")
     password = args.get("password") or getpass("Enter your lidl plus password: ")
     lidl_plus = LidlPlusApi(language, country)
     try:
@@ -122,15 +122,28 @@ def print_loyalty_id(args):
     print(lidl_plus.loyalty_id())
 
 
-def print_tickets(args):
+def save_tickets(args):
     """pretty print as json"""
     lidl_plus = lidl_plus_login(args)
-    if args.get("all"):
-        tickets = [lidl_plus.ticket(ticket["id"]) for ticket in lidl_plus.tickets()]
-    else:
-        tickets = lidl_plus.ticket(lidl_plus.tickets()[0]["id"])
-    print(json.dumps(tickets, indent=4))
 
+    total_tickets = int(input("Number of tickets to download: "))
+    tickets = lidl_plus.tickets()
+
+    downloaded_tickets = []
+
+    os.makedirs("out/", exist_ok=True)
+    for i in range(total_tickets):
+        try:
+            ticket = lidl_plus.ticket(tickets[i]["id"])
+            downloaded_tickets.append(ticket)
+            with open(f'out/{tickets[i]["id"]}.html', "w") as f:
+                f.write(ticket["htmlPrintedReceipt"])
+        except Exception as e:
+            print(f"Failed to download ticket {tickets[i]['id']}: {e}")
+
+    with open("out/summary.json", "w") as f:
+        f.write(json.dumps(downloaded_tickets))
+    print("Saved all tickets to out/ (as HTML) and all content to out/summary.json")
 
 def activate_coupons(args):
     """Activate all available coupons"""
@@ -176,7 +189,7 @@ def main():
     elif args.get("id"):
         print_loyalty_id(args)
     elif args.get("receipt"):
-        print_tickets(args)
+        save_tickets(args)
     elif args.get("coupon"):
         activate_coupons(args)
 
