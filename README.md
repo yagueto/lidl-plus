@@ -1,17 +1,17 @@
 **This python package is unofficial and is not related in any way to Lidl. It was developed by reversed engineered requests and can stop working at anytime!**
 
+> [!IMPORTANT]
+> Auth and ticket download are working as of August 2025. This fork fixes errors after Lidl's API changes.
+> Many changes are based upon other user's reports on @Andre0512's repo, as well as my own research
+
+
 # Python Lidl Plus API
-[![GitHub Workflow Status](https://img.shields.io/github/actions/workflow/status/Andre0512/lidl-plus/python-check.yml?branch=main&label=checks)](https://github.com/Andre0512/lidl-plus/actions/workflows/python-check.yml)
-[![PyPI - Status](https://img.shields.io/pypi/status/lidl-plus)](https://pypi.org/project/lidl-plus)
-[![PyPI](https://img.shields.io/pypi/v/lidl-plus?color=blue)](https://pypi.org/project/lidl-plus)
-[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/lidl-plus)](https://www.python.org/)
-[![PyPI - License](https://img.shields.io/pypi/l/lidl-plus)](https://github.com/Andre0512/lidl-plus/blob/main/LICENCE)
-[![PyPI - Downloads](https://img.shields.io/pypi/dm/lidl-plus)](https://pypistats.org/packages/lidl-plus)
-[![Buy Me a Coffee](https://img.shields.io/badge/buy%20me%20a%20coffee-donate-orange.svg)](https://www.buymeacoffee.com/andre0512)  
 
-
-Fetch receipts and more from Lidl Plus.
+Fetch receipts, activate cupons and more. Useful to analyse spending patterns, find the date of a specific lost ticket (think of warranties!), etc
 ## Installation
+> [!IMPORTANT]
+> The version on PyPi is currently broken. To run, clone or download the repo directly, and install the requirements with "pip install -r requirements.txt"
+
 ```bash
 pip install lidl-plus
 ```
@@ -25,7 +25,7 @@ After we have received the token once, we can use it for further requestes and w
 * Check you have installed one of the supported web browser
   - Chromium
   - Google Chrome
-  - Mozilla Firefox
+  - Mozilla Firefox [tested August 2025, working]
   - Microsoft Edge
 * Install additional python packages
   ```bash
@@ -79,8 +79,10 @@ Get your receipts as json and receive a list of bought items like:
 ```
 
 #### Commandline-Tool
+> [!IMPORTANT]
+> Now it's no longer required to specify the "--all" flag, it will always ask and will automatically save them. 
 ```bash
-$ lidl-plus --language=de --country=AT --refresh-token=XXXXX receipt --all > data.json
+$ lidl-plus --language=de --country=AT --refresh-token=XXXXX receipt
 ```
 
 #### Python
@@ -183,9 +185,4 @@ commands:
   coupon                    activate coupons
 ```
 
-## Support
-If you find this project helpful and would like to support its development, you can buy me a coffee! ☕
 
-[!["Buy Me A Coffee"](https://www.buymeacoffee.com/assets/img/custom_images/orange_img.png)](https://www.buymeacoffee.com/andre0512)
-
-Don't forget to star the repository if you found it useful! ⭐
