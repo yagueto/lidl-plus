@@ -84,7 +84,13 @@ def lidl_plus_login(args):
     country = args.get("country") or input("Enter your country (DE, AT, ...): ")
     if args.get("refresh_token"):
         return LidlPlusApi(language, country, args.get("refresh_token"))
-    username = args.get("user") or input("Enter your lidl plus username (email): ")
+    login_method = input("Login with email or phone number? ([e]mail / [p]hone): ")
+    if login_method.lower() not in ["e", "p"]:
+        exit(1)
+    if login_method == "e":
+        username = args.get("user") or input("Enter your lidl plus username (email): ")
+    else:
+        username = args.get("user") or input("Enter your lidl plus phone number: ")
     password = args.get("password") or getpass("Enter your lidl plus password: ")
     lidl_plus = LidlPlusApi(language, country)
     try:
@@ -92,6 +98,7 @@ def lidl_plus_login(args):
         lidl_plus.login(
             username,
             password,
+            login_method,
             verify_token_func=lambda: input(text),
             verify_mode=args["2fa"],
             headless=not args.get("debug"),

@@ -209,13 +209,17 @@ class LidlPlusApi:
             browser.find_element(By.NAME, "VerificationCode").send_keys(verify_code)
             self._click(browser, (By.CLASS_NAME, "role_next"))
 
-    def login(self, phone, password, **kwargs):
+    def login(self, login, password, method, **kwargs):
         """Simulate app auth"""
         browser = self._get_browser(headless=kwargs.get("headless", True))
         browser.get(self._register_link)
         wait = WebDriverWait(browser, 15)
         wait.until(expected_conditions.visibility_of_element_located((By.XPATH, '//*[@id="duple-button-block"]/button[1]/span'))).click()
-        wait.until(expected_conditions.element_to_be_clickable((By.NAME, "input-email"))).send_keys(phone)
+        if method == "p": # Login with phone number
+            wait.until(expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, '[data-testid="button-login-switch"]'))).click()
+            wait.until(expected_conditions.element_to_be_clickable((By.NAME, "input-phone"))).send_keys(login)
+        else: # Login with email
+            wait.until(expected_conditions.element_to_be_clickable((By.NAME, "input-email"))).send_keys(login)
         wait.until(expected_conditions.element_to_be_clickable((By.NAME, "Password"))).send_keys(password)
         self._click(browser, (By.XPATH, '//*[@id="duple-button-block"]/button'))
 
