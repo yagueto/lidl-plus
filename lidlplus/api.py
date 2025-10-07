@@ -45,7 +45,7 @@ class LidlPlusApi:
     _CLIENT_ID = "LidlPlusNativeClient"
     _AUTH_API = "https://accounts.lidl.com"
     _TICKET_API = "https://tickets.lidlplus.com/api/v2"
-    _COUPONS_API = "https://coupons.lidlplus.com/api"
+    _COUPONS_API = "https://coupons.lidlplus.com/app/api"
     _COUPONS_V1_API = "https://coupons.lidlplus.com/app/api/"
     _PROFILE_API = "https://profile.lidlplus.com/profile/api"
     _APP = "com.lidlplus.app"
@@ -285,8 +285,9 @@ class LidlPlusApi:
 
     def coupons(self):
         """Get list of all coupons"""
-        url = f"{self._COUPONS_API}/v2/{self._country}"
-        kwargs = {"headers": self._default_headers(), "timeout": self._TIMEOUT}
+        url = f"{self._COUPONS_API}/v2/promotionsList"
+        headers = {**self._default_headers(), "Country": self._country}
+        kwargs = {"headers": headers, "timeout": self._TIMEOUT}
         return requests.get(url, **kwargs).json()
 
     def activate_coupon(self, coupon_id):
