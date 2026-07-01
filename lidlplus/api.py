@@ -7,6 +7,7 @@ import html
 import logging
 import re
 from datetime import datetime, timedelta
+from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 
@@ -30,12 +31,12 @@ try:
     from webdriver_manager.chrome import ChromeDriverManager
     from webdriver_manager.firefox import GeckoDriverManager
     from webdriver_manager.core.os_manager import ChromeType
-except ImportError as e:
+except Exception as e:
     if e.__traceback__ is not None:
         line_no = e.__traceback__.tb_lineno
     else:
         line_no = "unknown"
-    logging.error(f"ImportError: {type(e).__name__} at line {line_no}: {e}")
+    logging.error(f"Auth import failed: {type(e).__name__} at line {line_no}: {e}")
 
 
 
@@ -166,16 +167,19 @@ class LidlPlusApi:
         browser.find_element(By.TAG_NAME, "button").click()
 
     def _parse_code(self, browser, wait, accept_legal_terms=True):
+        candidate_urls = [browser.current_url]
         for request in reversed(browser.requests):
-            if f"{self._AUTH_API}/connect" not in request.url:
-                continue
-            location = request.response.headers.get("Location", "")
-            if "legalTerms" in location:
+            candidate_urls.append(request.url)
+            if request.response:
+                candidate_urls.append(request.response.headers.get("Location", ""))
+
+        for candidate_url in candidate_urls:
+            if "legalTerms" in candidate_url:
                 self._accept_legal_terms(browser, wait, accept=accept_legal_terms)
                 return self._parse_code(browser, wait, False)
-            if code := re.findall("code=([0-9A-F]+)", location):
-                return code[0]
-        return ""
+            if code := self._extract_code_from_url(candidate_url):
+                return code
+        raise LoginError("Unable to parse authorization code")
 
     def _click(self, browser, button, request=""):
         del browser.requests
@@ -202,7 +206,8 @@ class LidlPlusApi:
         if verify_mode not in ["phone", "email"]:
             raise ValueError(f'Unknown 2fa-mode "{verify_mode}" - Only "phone" or "email" supported')
         response = browser.wait_for_request(f"{self._AUTH_API}/Account/Login.*", 10).response
-        if "/connect/authorize/callback" not in response.headers.get("Location"):
+
+        if "%2Fconnect%2Fauthorize%2Fcallback%" not in browser.current_url:
             element = wait.until(expected_conditions.visibility_of_element_located((By.CLASS_NAME, verify_mode)))
             element.find_element(By.TAG_NAME, "button").click()
             verify_code = verify_token_func() # type: ignore
@@ -214,14 +219,16 @@ class LidlPlusApi:
         browser = self._get_browser(headless=kwargs.get("headless", True))
         browser.get(self._register_link)
         wait = WebDriverWait(browser, 15)
-        wait.until(expected_conditions.visibility_of_element_located((By.XPATH, '//*[@id="duple-button-block"]/button[1]/span'))).click()
         if method == "p": # Login with phone number
-            wait.until(expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, '[data-testid="button-login-switch"]'))).click()
+            wait.until(expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, '.items-start > button:nth-child(1)'))).click()
             wait.until(expected_conditions.element_to_be_clickable((By.NAME, "input-phone"))).send_keys(login)
         else: # Login with email
             wait.until(expected_conditions.element_to_be_clickable((By.NAME, "input-email"))).send_keys(login)
+        wait.until(expected_conditions.element_to_be_clickable((By.XPATH, "/html/body/main/form[1]/div/div/div/div/section/div[3]/button"))).click()
+        WebDriverWait(browser, 15).until(expected_conditions.element_to_be_clickable((By.NAME, "Password")))
         wait.until(expected_conditions.element_to_be_clickable((By.NAME, "Password"))).send_keys(password)
-        self._click(browser, (By.XPATH, '//*[@id="duple-button-block"]/button'))
+        wait.until(expected_conditions.element_to_be_clickable((By.XPATH, "/html/body/main/form[1]/div/div/div/div/section/button"))).click()
+
 
         self._check_login_error(browser)
         self._check_2fa_auth(
