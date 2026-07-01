@@ -242,7 +242,9 @@ class LidlPlusApi:
             raise MissingLogin("You need to login!")
         return {
             "Authorization": f"Bearer {self._token}",
-            "App-Version": "999.99.9",
+            # A realistic app version: Lidl's WAF now silently stalls the obviously
+            # -fake "999.99.9" (requests hang to a read timeout instead of 200).
+            "App-Version": "16.7.0",
             "Operating-System": self._OS,
             "App": "com.lidl.eci.lidl.plus",
             "Accept-Language": self._language,
