@@ -42,17 +42,19 @@ def get_arguments():
         action="store_true",
     )
     parser.add_argument("-d", "--debug", help="debug mode", action="store_true")
-    subparser = parser.add_subparsers(title="commands", metavar="command", required=True)
-    auth = subparser.add_parser("auth", help="authenticate and get token")
-    auth.add_argument("auth", help="authenticate and print refresh_token", action="store_true")
-    loyalty_id = subparser.add_parser("id", help="show loyalty ID")
-    loyalty_id.add_argument("id", help="show loyalty ID", action="store_true")
+
+    subparser = parser.add_subparsers(title="commands", metavar="command", dest="command", required=True)
+
+    subparser.add_parser("auth", help="authenticate and print refresh_token")
+
+    subparser.add_parser("id", help="show loyalty ID")
+
     receipt = subparser.add_parser("receipt", help="output last receipts as json")
-    receipt.add_argument("receipt", help="output last receipts as json", action="store_true")
     receipt.add_argument("-a", "--all", help="fetch all receipts", action="store_true")
+
     coupon = subparser.add_parser("coupon", help="activate coupons")
-    coupon.add_argument("coupon", help="output all coupons", action="store_true")
     coupon.add_argument("-a", "--all", help="activate all coupons", action="store_true")
+
     return vars(parser.parse_args())
 
 
@@ -177,13 +179,15 @@ def activate_coupons(args):
 def main():
     """argument commands"""
     args = get_arguments()
-    if args.get("auth"):
+    print(args) # TODO: quitar!
+
+    if args.get("command") == "auth":
         print_refresh_token(args)
-    elif args.get("id"):
+    elif args.get("command") == "id":
         print_loyalty_id(args)
-    elif args.get("receipt"):
+    elif args.get("command") == "receipt":
         save_tickets(args)
-    elif args.get("coupon"):
+    elif args.get("command") == "coupon":
         activate_coupons(args)
 
 

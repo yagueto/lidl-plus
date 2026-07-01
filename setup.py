@@ -46,6 +46,7 @@ setup(
             "getuseragent>=0.0.7",
             "oic>=1.4.0",
             "selenium-wire>=5.1.0",
+            "pyOpenSSL<26.0.0",
             "webdriver-manager>=3.8.5",
         ]
     },
