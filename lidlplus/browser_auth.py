@@ -97,6 +97,11 @@ def _raise_login_error(browser):
         raise LoginError(" ".join(dict.fromkeys(messages)))
 
 
+def _submit_form(element):
+    form = element.find_element(By.XPATH, "./ancestor::form")
+    form.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
+
+
 class _BrowserLogin:  # pylint: disable=too-few-public-methods
     def __init__(self, login_url, credentials, extract_code, options):
         self.login_url = login_url
@@ -116,8 +121,7 @@ class _BrowserLogin:  # pylint: disable=too-few-public-methods
             raise LegalTermsException(titles[0] if titles else "Updated legal terms require acceptance")
         if not checkboxes[0].is_selected():
             checkboxes[0].click()
-        form = checkboxes[0].find_element(By.XPATH, "./ancestor::form")
-        form.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
+        _submit_form(checkboxes[0])
         return True
 
     def _select_verification_method(self):
@@ -158,13 +162,11 @@ class _BrowserLogin:  # pylint: disable=too-few-public-methods
                 (By.CSS_SELECTOR, '[data-testid="login-or-register-submit-button"]')
             )
         ).click()
-        wait.until(
+        password_input = wait.until(
             expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, '[data-testid="login-input-password"]'))
-        ).send_keys(self.credentials.password)
-        password_view = wait.until(
-            expected_conditions.presence_of_element_located((By.CSS_SELECTOR, '[data-testid="password-step-view"]'))
         )
-        password_view.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
+        password_input.send_keys(self.credentials.password)
+        _submit_form(password_input)
 
     def _submit_verification_code(self):
         verification_inputs = [
@@ -180,8 +182,7 @@ class _BrowserLogin:  # pylint: disable=too-few-public-methods
         if self.options.verify_token_func is None:
             raise LoginError("A verification code is required")
         verification_inputs[0].send_keys(self.options.verify_token_func())
-        form = verification_inputs[0].find_element(By.XPATH, "./ancestor::form")
-        form.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
+        _submit_form(verification_inputs[0])
         return True
 
     def _wait_for_code(self):
