@@ -142,4 +142,5 @@ Coupon calls use the current `/app/api` routes and send the required `Country` h
 .venv/bin/pylint --max-line-length=120 lidlplus
 .venv/bin/mypy lidlplus
 .venv/bin/black --check --line-length=120 lidlplus tests setup.py
+.venv/bin/python -m build
 ```
