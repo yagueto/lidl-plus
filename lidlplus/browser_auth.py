@@ -102,6 +102,14 @@ def _submit_form(element):
     form.find_element(By.CSS_SELECTOR, 'button[type="submit"]').click()
 
 
+def _fill_password(wait, password):
+    password_input = wait.until(
+        expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, '[data-testid="login-input-password"]'))
+    )
+    password_input.send_keys(password)
+    wait.until(expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, '[data-testid="button-primary"]'))).click()
+
+
 class _BrowserLogin:  # pylint: disable=too-few-public-methods
     def __init__(self, login_url, credentials, extract_code, options):
         self.login_url = login_url
@@ -162,11 +170,7 @@ class _BrowserLogin:  # pylint: disable=too-few-public-methods
                 (By.CSS_SELECTOR, '[data-testid="login-or-register-submit-button"]')
             )
         ).click()
-        password_input = wait.until(
-            expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, '[data-testid="login-input-password"]'))
-        )
-        password_input.send_keys(self.credentials.password)
-        _submit_form(password_input)
+        _fill_password(wait, self.credentials.password)
 
     def _submit_verification_code(self):
         verification_inputs = [
