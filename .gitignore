@@ -2,6 +2,7 @@
 __pycache__/
 dist/
 venv/
+.venv/
 *.json
 *.log
 **/*.egg-info/

@@ -1,59 +1,33 @@
-"""
-Lidl Plus api
-"""
+"""Lidl Plus API client."""
 
 import base64
-import html
-import logging
-import re
-from datetime import datetime, timedelta
-from urllib.parse import parse_qs, unquote, urlparse
+import hashlib
+import secrets
+from datetime import datetime, timedelta, timezone
+from urllib.parse import parse_qs, urlencode, urlparse
 
 import requests
 
-from lidlplus.exceptions import (
-    WebBrowserException,
-    LoginError,
-    LegalTermsException,
-    MissingLogin,
-)
-
-try:
-    from getuseragent import UserAgent
-    from oic.oic import Client
-    from oic.utils.authn.client import CLIENT_AUTHN_METHOD
-    from selenium.webdriver.chrome.service import Service
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.support import expected_conditions
-    from selenium.webdriver.support.ui import WebDriverWait
-    from seleniumwire import webdriver
-    from seleniumwire.utils import decode
-    from webdriver_manager.chrome import ChromeDriverManager
-    from webdriver_manager.firefox import GeckoDriverManager
-    from webdriver_manager.core.os_manager import ChromeType
-except Exception as e:
-    if e.__traceback__ is not None:
-        line_no = e.__traceback__.tb_lineno
-    else:
-        line_no = "unknown"
-    logging.error(f"Auth import failed: {type(e).__name__} at line {line_no}: {e}")
-
+from lidlplus.exceptions import MissingLogin
 
 
 class LidlPlusApi:
-    """Lidl Plus api connector"""
+    """Lidl Plus API connector."""
+
+    # pylint: disable=too-many-instance-attributes
 
     _CLIENT_ID = "LidlPlusNativeClient"
     _AUTH_API = "https://accounts.lidl.com"
     _TICKET_API = "https://tickets.lidlplus.com/api/v2"
+    _TICKET_V3_API = "https://tickets.lidlplus.com/api/v3"
     _COUPONS_API = "https://coupons.lidlplus.com/app/api"
-    _COUPONS_V1_API = "https://coupons.lidlplus.com/app/api/"
-    _PROFILE_API = "https://profile.lidlplus.com/profile/api"
     _APP = "com.lidlplus.app"
     _OS = "iOs"
     _TIMEOUT = 10
+    _TOKEN_LEEWAY = timedelta(seconds=30)
+    _APP_VERSION = "17.9.3"
 
-    def __init__(self, language, country, refresh_token=""):
+    def __init__(self, language, country, refresh_token="", app_version=None, session=None):
         self._login_url = ""
         self._code_verifier = ""
         self._refresh_token = refresh_token
@@ -61,80 +35,54 @@ class LidlPlusApi:
         self._token = ""
         self._country = country.upper()
         self._language = language.lower()
+        self._app_version = app_version or self._APP_VERSION
+        self._session = session or requests.Session()
 
     @property
     def refresh_token(self):
-        """Lidl Plus api refresh token"""
+        """Return the current refresh token."""
         return self._refresh_token
 
     @property
     def token(self):
-        """Current token to query api"""
+        """Return the current access token."""
         return self._token
 
     def _register_oauth_client(self):
         if self._login_url:
             return self._login_url
-        client = Client(client_authn_method=CLIENT_AUTHN_METHOD, client_id=self._CLIENT_ID)
-        client.provider_config(self._AUTH_API)
-        code_challenge, self._code_verifier = client.add_code_challenge()
-        args = {
-            "client_id": client.client_id,
+
+        self._code_verifier = secrets.token_urlsafe(64)
+        digest = hashlib.sha256(self._code_verifier.encode("ascii")).digest()
+        code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode("ascii")
+        params = {
+            "client_id": self._CLIENT_ID,
             "response_type": "code",
-            "scope": ["openid profile offline_access lpprofile lpapis"],
+            "scope": "openid profile offline_access lpprofile lpapis",
             "redirect_uri": f"{self._APP}://callback",
-            **code_challenge,
+            "code_challenge": code_challenge,
+            "code_challenge_method": "S256",
         }
-        auth_req = client.construct_AuthorizationRequest(request_args=args)
-        self._login_url = auth_req.request(client.authorization_endpoint)
+        self._login_url = f"{self._AUTH_API}/connect/authorize?{urlencode(params)}"
         return self._login_url
-
-    def _init_chrome(self, headless=True):
-        user_agent = UserAgent(self._OS.lower()).Random()
-        logging.getLogger("WDM").setLevel(logging.NOTSET)
-        options = webdriver.ChromeOptions()
-        if headless:
-            options.add_argument("headless")
-        options.add_experimental_option("mobileEmulation", {"userAgent": user_agent})
-        for chrome_type in [ChromeType.GOOGLE, ChromeType.MSEDGE, ChromeType.CHROMIUM]:
-            try:
-                service = Service(ChromeDriverManager(chrome_type=chrome_type).install())
-                return webdriver.Chrome(service=service, options=options)
-            except AttributeError:
-                continue
-        raise WebBrowserException("Unable to find a suitable Chrome driver")
-
-    def _init_firefox(self, headless=True):
-        user_agent = UserAgent(self._OS.lower()).Random()
-        logging.getLogger("WDM").setLevel(logging.NOTSET)
-        options = webdriver.FirefoxOptions()
-        profile = webdriver.FirefoxProfile()
-        profile.set_preference("general.useragent.override", user_agent)
-        return webdriver.Firefox(
-            options=options,
-        )
-
-    def _get_browser(self, headless=True):
-        try:
-            return self._init_chrome(headless=headless)
-        # pylint: disable=broad-except
-        except Exception as exc1:
-            try:
-                return self._init_firefox(headless=headless)
-            except Exception as exc2:
-                raise WebBrowserException from exc1 and exc2
 
     def _auth(self, payload):
         default_secret = base64.b64encode(f"{self._CLIENT_ID}:secret".encode()).decode()
-        headers = {
-            "Authorization": f"Basic {default_secret}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        }
-        kwargs = {"headers": headers, "data": payload, "timeout": self._TIMEOUT}
-        response = requests.post(f"{self._AUTH_API}/connect/token", **kwargs).json()
-        self._expires = datetime.utcnow() + timedelta(seconds=response["expires_in"])
-        self._token = response["access_token"]
-        self._refresh_token = response["refresh_token"]
+        response = self._session.post(
+            f"{self._AUTH_API}/connect/token",
+            headers={
+                "Authorization": f"Basic {default_secret}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            },
+            data=payload,
+            timeout=self._TIMEOUT,
+        )
+        response.raise_for_status()
+        tokens = response.json()
+        self._expires = datetime.now(timezone.utc) + timedelta(seconds=tokens["expires_in"])
+        self._token = tokens["access_token"]
+        self._refresh_token = tokens.get("refresh_token", self._refresh_token)
+        return tokens
 
     def _renew_token(self):
         payload = {"refresh_token": self._refresh_token, "grant_type": "refresh_token"}
@@ -151,168 +99,131 @@ class LidlPlusApi:
 
     @property
     def _register_link(self):
-        args = {
+        params = {
             "Country": self._country,
             "language": f"{self._language}-{self._country}",
         }
-        params = "&".join([f"{key}={value}" for key, value in args.items()])
-        return f"{self._register_oauth_client()}&{params}"
+        return f"{self._register_oauth_client()}&{urlencode(params)}"
 
     @staticmethod
-    def _accept_legal_terms(browser, wait, accept=True):
-        wait.until(expected_conditions.visibility_of_element_located((By.ID, "checkbox_Accepted"))).click()
-        if not accept:
-            title = browser.find_element(By.TAG_NAME, "h2").text
-            raise LegalTermsException(title)
-        browser.find_element(By.TAG_NAME, "button").click()
+    def _extract_code_from_url(candidate_url):
+        if not candidate_url:
+            return None
+        parsed = urlparse(candidate_url)
+        for values in (parse_qs(parsed.query), parse_qs(parsed.fragment)):
+            codes = values.get("code")
+            if codes and codes[0]:
+                return codes[0]
+            for key in ("redirect_uri", "returnUrl", "ReturnUrl"):
+                for nested_url in values.get(key, []):
+                    if nested_code := LidlPlusApi._extract_code_from_url(nested_url):
+                        return nested_code
+        return None
 
-    def _parse_code(self, browser, wait, accept_legal_terms=True):
-        candidate_urls = [browser.current_url]
-        for request in reversed(browser.requests):
-            candidate_urls.append(request.url)
-            if request.response:
-                candidate_urls.append(request.response.headers.get("Location", ""))
+    def login(self, login, password, method="e", **kwargs):
+        """Authenticate through a real browser and store the resulting tokens."""
+        try:
+            from lidlplus.browser_auth import (  # pylint: disable=import-outside-toplevel
+                BrowserLoginOptions,
+                LoginCredentials,
+                get_authorization_code,
+            )
+        except ImportError as error:
+            from lidlplus.exceptions import WebBrowserException  # pylint: disable=import-outside-toplevel
 
-        for candidate_url in candidate_urls:
-            if "legalTerms" in candidate_url:
-                self._accept_legal_terms(browser, wait, accept=accept_legal_terms)
-                return self._parse_code(browser, wait, False)
-            if code := self._extract_code_from_url(candidate_url):
-                return code
-        raise LoginError("Unable to parse authorization code")
+            raise WebBrowserException(
+                'Browser authentication requires the optional dependency: pip install "lidl-plus[auth]"'
+            ) from error
 
-    def _click(self, browser, button, request=""):
-        del browser.requests
-        browser.backend.storage.clear_requests()
-        browser.find_element(*button).click()
-        self._check_input_error(browser)
-        if request and browser.wait_for_request(request, 10):
-            self._check_input_error(browser)
-
-    @staticmethod
-    def _check_input_error(browser):
-        if errors := browser.find_elements(By.CLASS_NAME, "input-error-message"):
-            for error in errors:
-                if error.text:
-                    raise LoginError(error.text)
-
-    def _check_login_error(self, browser):
-        response = browser.wait_for_request(f"{self._AUTH_API}/Account/Login.*", 10).response
-        body = html.unescape(decode(response.body, response.headers.get("Content-Encoding", "identity")).decode())
-        if error := re.findall('app-errors="\\{[^:]*?:.(.*?).}', body):
-            raise LoginError(error[0])
-
-    def _check_2fa_auth(self, browser, wait, verify_mode="phone", verify_token_func=None):
-        if verify_mode not in ["phone", "email"]:
-            raise ValueError(f'Unknown 2fa-mode "{verify_mode}" - Only "phone" or "email" supported')
-        response = browser.wait_for_request(f"{self._AUTH_API}/Account/Login.*", 10).response
-
-        if "%2Fconnect%2Fauthorize%2Fcallback%" not in browser.current_url:
-            element = wait.until(expected_conditions.visibility_of_element_located((By.CLASS_NAME, verify_mode)))
-            element.find_element(By.TAG_NAME, "button").click()
-            verify_code = verify_token_func() # type: ignore
-            browser.find_element(By.NAME, "VerificationCode").send_keys(verify_code)
-            self._click(browser, (By.CLASS_NAME, "role_next"))
-
-    def login(self, login, password, method, **kwargs):
-        """Simulate app auth"""
-        browser = self._get_browser(headless=kwargs.get("headless", True))
-        browser.get(self._register_link)
-        wait = WebDriverWait(browser, 15)
-        if method == "p": # Login with phone number
-            wait.until(expected_conditions.element_to_be_clickable((By.CSS_SELECTOR, '.items-start > button:nth-child(1)'))).click()
-            wait.until(expected_conditions.element_to_be_clickable((By.NAME, "input-phone"))).send_keys(login)
-        else: # Login with email
-            wait.until(expected_conditions.element_to_be_clickable((By.NAME, "input-email"))).send_keys(login)
-        wait.until(expected_conditions.element_to_be_clickable((By.XPATH, "/html/body/main/form[1]/div/div/div/div/section/div[3]/button"))).click()
-        WebDriverWait(browser, 15).until(expected_conditions.element_to_be_clickable((By.NAME, "Password")))
-        wait.until(expected_conditions.element_to_be_clickable((By.NAME, "Password"))).send_keys(password)
-        wait.until(expected_conditions.element_to_be_clickable((By.XPATH, "/html/body/main/form[1]/div/div/div/div/section/button"))).click()
-
-
-        self._check_login_error(browser)
-        self._check_2fa_auth(
-            browser,
-            wait,
-            kwargs.get("verify_mode", "phone"),
-            kwargs.get("verify_token_func"),
+        code = get_authorization_code(
+            self._register_link,
+            LoginCredentials(login, password, method),
+            self._extract_code_from_url,
+            BrowserLoginOptions(
+                accept_legal_terms=kwargs.get("accept_legal_terms", True),
+                headless=kwargs.get("headless", False),
+                timeout=kwargs.get("timeout", 180),
+                verify_mode=kwargs.get("verify_mode", "phone"),
+                verify_token_func=kwargs.get("verify_token_func"),
+            ),
         )
-        browser.wait_for_request(f"{self._AUTH_API}/connect.*")
-        code = self._parse_code(browser, wait, accept_legal_terms=kwargs.get("accept_legal_terms", True))
-        self._authorization_code(code)
-        browser.close()
+        return self._authorization_code(code)
 
     def _default_headers(self):
-        if (not self._token and self._refresh_token):
+        now = datetime.now(timezone.utc)
+        if self._refresh_token and (
+            not self._token or self._expires is None or now + self._TOKEN_LEEWAY >= self._expires
+        ):
             self._renew_token()
         if not self._token:
             raise MissingLogin("You need to login!")
         return {
             "Authorization": f"Bearer {self._token}",
-            "App-Version": "999.99.9",
+            "App-Version": self._app_version,
             "Operating-System": self._OS,
             "App": "com.lidl.eci.lidl.plus",
             "Accept-Language": self._language,
         }
 
-    def tickets(self, only_favorite=False):
-        """
-        Get a list of all tickets.
+    def _request(self, method, url, **kwargs):
+        headers = {**self._default_headers(), **kwargs.pop("headers", {})}
+        response = self._session.request(
+            method,
+            url,
+            headers=headers,
+            timeout=self._TIMEOUT,
+            **kwargs,
+        )
+        response.raise_for_status()
+        return response
 
-        :param onlyFavorite: A boolean value indicating whether to only retrieve favorite tickets.
-            If set to True, only favorite tickets will be returned.
-            If set to False (the default), all tickets will be retrieved.
-        :type onlyFavorite: bool
-        """
+    def tickets(self, only_favorite=False):
+        """Return all receipt summaries, following the API pagination."""
         url = f"{self._TICKET_API}/{self._country}/tickets"
-        kwargs = {"headers": self._default_headers(), "timeout": self._TIMEOUT}
-        ticket = requests.get(f"{url}?pageNumber=1&onlyFavorite={only_favorite}", **kwargs).json()
-        tickets = ticket["tickets"]
-        for i in range(2, int(ticket["totalCount"] / ticket["size"] + 2)):
-            tickets += requests.get(f"{url}?pageNumber={i}", **kwargs).json()["tickets"]
+        tickets = []
+        page_number = 1
+        while True:
+            page = self._request(
+                "GET",
+                url,
+                params={"pageNumber": page_number, "onlyFavorite": str(only_favorite).lower()},
+            ).json()
+            page_tickets = page.get("tickets", [])
+            tickets.extend(page_tickets)
+            if not page_tickets or len(tickets) >= page.get("totalCount", len(tickets)):
+                break
+            page_number += 1
         return tickets
 
     def ticket(self, ticket_id):
-        """Get full data of single ticket by id"""
-        kwargs = {"headers": self._default_headers(), "timeout": self._TIMEOUT}
-        url = f"https://tickets.lidlplus.com/api/v3/{self._country}/tickets"
-        return requests.get(f"{url}/{ticket_id}", **kwargs).json()
+        """Return full data for one receipt."""
+        url = f"{self._TICKET_API}/{self._country}/tickets/{ticket_id}"
+        try:
+            return self._request("GET", url).json()
+        except requests.HTTPError:
+            fallback = f"{self._TICKET_V3_API}/{self._country}/tickets/{ticket_id}"
+            return self._request("GET", fallback).json()
 
     def coupon_promotions_v1(self):
-        """Get list of all coupons API V1"""
-        url = f"{self._COUPONS_V1_API}/v1/promotionslist"
-        kwargs = {"headers": {**self._default_headers(), "Country": self._country}, "timeout": self._TIMEOUT}
-        return requests.get(url, **kwargs).json()
+        """Return the older single-section coupon list."""
+        url = f"{self._COUPONS_API}/v1/promotionslist"
+        return self._request("GET", url, headers={"Country": self._country}).json()
 
     def activate_coupon_promotion_v1(self, promotion_id):
-        """Activate single coupon by id API V1"""
-        url = f"{self._COUPONS_API}/v1/promotions/{promotion_id}/activation"
-        kwargs = {"headers": {**self._default_headers(), "Country": self._country}, "timeout": self._TIMEOUT}
-        return requests.post(url, **kwargs).text
+        """Activate a coupon using its coupon ID."""
+        return self.activate_coupon(promotion_id)
 
     def coupons(self):
-        """Get list of all coupons"""
-        url = f"{self._COUPONS_API}/v2/promotionsList"
-        headers = {**self._default_headers(), "Country": self._country}
-        kwargs = {"headers": headers, "timeout": self._TIMEOUT}
-        return requests.get(url, **kwargs).json()
+        """Return the current sectioned coupon list."""
+        url = f"{self._COUPONS_API}/v2/promotionslist"
+        return self._request("GET", url, headers={"Country": self._country}).json()
 
     def activate_coupon(self, coupon_id):
-        """Activate single coupon by id"""
+        """Activate a coupon using its coupon ID."""
         url = f"{self._COUPONS_API}/v1/promotions/{coupon_id}/activation"
-        kwargs = {"headers": {**self._default_headers(), "Country": self._country}, "timeout": self._TIMEOUT}
-        return requests.post(url, **kwargs).text
+        return self._request("POST", url, headers={"Country": self._country}).text
 
     def deactivate_coupon(self, coupon_id):
-        """Deactivate single coupon by id"""
-        url = f"{self._COUPONS_API}/v1/{self._country}/{coupon_id}/activation"
-        kwargs = {"headers": self._default_headers(), "timeout": self._TIMEOUT}
-        return requests.delete(url, **kwargs).json()
-
-    def loyalty_id(self):
-        """Get your loyalty ID"""
-        url = f"{self._PROFILE_API}/v1/{self._country}/loyalty"
-        kwargs = {"headers": self._default_headers(), "timeout": self._TIMEOUT}
-        response = requests.get(url, **kwargs)
-        response.raise_for_status()
-        return response.text
+        """Deactivate a coupon using its coupon ID."""
+        url = f"{self._COUPONS_API}/v1/promotions/{coupon_id}/activation"
+        return self._request("DELETE", url, headers={"Country": self._country}).text
