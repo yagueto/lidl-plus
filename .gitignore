@@ -7,3 +7,4 @@ venv/
 *.log
 **/*.egg-info/
 test.py
+out/
