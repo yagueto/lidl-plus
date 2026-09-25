@@ -1,5 +1,8 @@
 # Python Lidl Plus API
 
+This fork builds on [Andre Basche's original `lidl-plus` project](https://github.com/Andre0512/lidl-plus).
+Its updates are based on reports from that repository's users and additional research by this fork's maintainer.
+
 > [!WARNING]
 > This unofficial package uses reverse-engineered Lidl Plus endpoints. It is not affiliated with Lidl, and private
 > endpoints can change without notice.
@@ -10,16 +13,23 @@ Python 3.10 or newer is required.
 
 ## Installation
 
-Install the base client:
+> [!IMPORTANT]
+> The `lidl-plus` release on PyPI is maintained separately and does not include this fork's changes. Install this fork
+> from its GitHub source instead.
+
+Clone and install the base client:
 
 ```bash
-pip install lidl-plus
+git clone https://github.com/yagueto/lidl-plus.git
+cd lidl-plus
+python -m venv .venv
+.venv/bin/pip install -e .
 ```
 
 Install browser authentication support when you need to obtain a refresh token:
 
 ```bash
-pip install "lidl-plus[auth]"
+.venv/bin/pip install -e ".[auth]"
 ```
 
 The authentication extra uses Selenium 4 and Selenium Manager. It no longer depends on Selenium Wire, a separately
@@ -28,7 +38,6 @@ downloaded driver, `oic`, or the old Blinker compatibility pin. Install Chrome, 
 For a development checkout:
 
 ```bash
-python -m venv .venv
 .venv/bin/pip install -r requirements.txt -r requirements_dev.txt
 ```
 

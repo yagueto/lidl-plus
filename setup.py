@@ -18,7 +18,7 @@ setup(
     long_description_content_type="text/markdown",
     project_urls={
         "GitHub": "https://github.com/yagueto/lidl-plus",
-        "PyPI": "https://pypi.org/project/lidl-plus/",
+        "Original project": "https://github.com/Andre0512/lidl-plus",
     },
     license="MIT",
     classifiers=[
