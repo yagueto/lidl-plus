@@ -1,6 +1,4 @@
-"""
-Exeptions
-"""
+"""Package exceptions."""
 
 
 class WebBrowserException(Exception):

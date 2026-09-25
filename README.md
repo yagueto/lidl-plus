@@ -1,188 +1,155 @@
-**This python package is unofficial and is not related in any way to Lidl. It was developed by reversed engineered requests and can stop working at anytime!**
-
-> [!IMPORTANT]
-> Auth and ticket download are working as of August 2025. This fork fixes errors after Lidl's API changes.
-> Many changes are based upon other user's reports on @Andre0512's repo, as well as my own research
-
-
 # Python Lidl Plus API
 
-Fetch receipts, activate cupons and more. Useful to analyse spending patterns, find the date of a specific lost ticket (think of warranties!), etc
+This fork builds on [Andre Basche's original `lidl-plus` project](https://github.com/Andre0512/lidl-plus).
+Its updates are based on reports from that repository's users and additional research by this fork's maintainer.
+
+> [!WARNING]
+> This unofficial package uses reverse-engineered Lidl Plus endpoints. It is not affiliated with Lidl, and private
+> endpoints can change without notice.
+
+Fetch digital receipts, list coupons, and activate or deactivate coupons from Python or the command line.
+
+Python 3.10 or newer is required.
+
 ## Installation
+
 > [!IMPORTANT]
-> The version on PyPi is currently broken. To run, clone or download the repo directly, and install the requirements with "pip install -r requirements.txt"
+> The `lidl-plus` release on PyPI is maintained separately and does not include this fork's changes. Install this fork
+> from its GitHub source instead.
+
+Clone and install the base client:
 
 ```bash
-pip install lidl-plus
+git clone https://github.com/yagueto/lidl-plus.git
+cd lidl-plus
+python -m venv .venv
+.venv/bin/pip install -e .
+```
+
+Install browser authentication support when you need to obtain a refresh token:
+
+```bash
+.venv/bin/pip install -e ".[auth]"
+```
+
+The authentication extra uses Selenium 4 and Selenium Manager. It no longer depends on Selenium Wire, a separately
+downloaded driver, `oic`, or the old Blinker compatibility pin. Install Chrome, Edge, or Firefox before authenticating.
+
+For a development checkout:
+
+```bash
+.venv/bin/pip install -r requirements.txt -r requirements_dev.txt
 ```
 
 ## Authentication
-To login in Lidl Plus we need to simulate the app login.
-This is a bit complicated, we need a web browser and some additional python packages.
-After we have received the token once, we can use it for further requestes and we don't need a browser anymore.
 
-#### Prerequisites
-* Check you have installed one of the supported web browser
-  - Chromium
-  - Google Chrome
-  - Mozilla Firefox [tested August 2025, working]
-  - Microsoft Edge
-* Install additional python packages
-  ```bash
-  pip install "lidl-plus[auth]"
-  ```
-#### Commandline-Tool
+Lidl authentication uses OAuth 2.0 with PKCE. The command opens a visible browser because Lidl's current login page
+uses browser device checks and reCAPTCHA. Complete any challenge in the opened window.
+
 ```bash
-$ lidl-plus auth
-Enter your language (de, en, ...): de
-Enter your country (DE, AT, ...): AT
-Enter your lidl plus username (phone number): +4915784632296
-Enter your lidl plus password:
-Enter the verify code you received via phone: 590287
-------------------------- refresh token ------------------------
-2D4FC2A699AC703CAB8D017012658234917651203746021A4AA3F735C8A53B7F
-----------------------------------------------------------------
+lidl-plus --language de --country AT auth
 ```
 
-#### Python
+The refresh token is printed and saved with owner-only permissions to:
+
+```text
+~/.config/lidl-plus/refresh_token
+```
+
+Subsequent CLI calls read that file automatically and replace it when Lidl rotates the token. Use `--token-file` to
+choose another location, or `--refresh-token` to provide a token directly. `--headless` is available, but Lidl may
+reject headless browser sessions.
+
+Python authentication:
+
 ```python
 from lidlplus import LidlPlusApi
 
 lidl = LidlPlusApi(language="de", country="AT")
-lidl.login(phone="+4915784632296", password="password", verify_token_func=lambda: input("Insert code: "))
+lidl.login(
+    login="name@example.com",
+    password="password",
+    method="e",
+    verify_token_func=lambda: input("Verification code: "),
+)
 print(lidl.refresh_token)
 ```
-## Usage
-Currently, the only features are fetching receipts and activating coupons
-### Receipts
 
-Get your receipts as json and receive a list of bought items like:
-```json
-{
-    "currentUnitPrice": "2,19",
-    "quantity": "1",
-    "isWeight": false,
-    "originalAmount": "2,19",
-    "name": "Vegane Frikadellen",
-    "taxGroup": "1",
-    "taxGroupName": "A",
-    "codeInput": "4023456245134",
-    "discounts": [
-        {
-            "description": "5€ Coupon",
-            "amount": "0,21"
-        }
-    ],
-    "deposit": null,
-    "giftSerialNumber": null
-},
-```
+Use `method="p"` for a phone-number login. Browser authentication is only required to obtain the initial refresh
+token.
 
-#### Commandline-Tool
-> [!IMPORTANT]
-> Now it's no longer required to specify the "--all" flag, it will always ask and will automatically save them. 
+## Receipts
+
+Save the newest receipt:
+
 ```bash
-$ lidl-plus --language=de --country=AT --refresh-token=XXXXX receipt
+lidl-plus --language de --country AT receipt
 ```
 
-#### Python
+Save a specific number or every receipt:
+
+```bash
+lidl-plus --language de --country AT receipt --limit 10
+lidl-plus --language de --country AT receipt --all --output-dir receipts
+```
+
+The command writes receipt details to `summary.json` and saves printable HTML when the API provides it.
+
+Python:
+
 ```python
 from lidlplus import LidlPlusApi
 
-lidl = LidlPlusApi("de", "AT", refresh_token="XXXXXXXXXX")
+lidl = LidlPlusApi("de", "AT", refresh_token="...")
 for receipt in lidl.tickets():
-    pprint(lidl.ticket(receipt["id"]))
+    detail = lidl.ticket(receipt["id"])
+    print(detail)
+
+# Persist this value after authenticated calls because Lidl rotates refresh tokens.
+print(lidl.refresh_token)
 ```
 
-### Coupons
+The receipt detail call tries the v2 endpoint first and falls back to v3 for countries where v2 rejects receipt IDs.
 
-You can list all coupons and activate/deactivate them by id
-```json
-{
-    "sections": [
-        {
-            "name": "FavoriteStore",
-            "coupons": []
-        },
-        {
-            "name": "AllStores",
-            "coupons": [
-                {
-                    "id": "2c9b3554-a09c-412c-8be4-d41cbff13572",
-                    "image": "https://lidlplusprod.blob.core.windows.net/images/coupons/LT/IDISC0000254911.png?t=1695452076",
-                    "type": "Standard",
-                    "offerTitle": "1 + 1",
-                    "title": "👨🏻‍🍳 Frozen 👨🏻‍🍳",
-                    "offerDescriptionShort": "FREE",
-                    "isSegmented": false,
-                    "startValidityDate": "2023-09-24T21:00:00Z",
-                    "endValidityDate": "2023-10-01T20:59:59Z",
-                    "isActivated": false,
-                    "apologizeText": "Xxxxxxxxxxxxxxxxx",
-                    "apologizeStatus": false,
-                    "apologizeTitle": "Xxxxxxxxxxxxxxxxxxx",
-                    "promotionId": "DISC0000254911",
-                    "tagSpecial": "",
-                    "firstColor": "#ffc700",
-                    "secondaryColor": null,
-                    "firstFontColor": "#4a4a4a",
-                    "secondaryFontColor": null,
-                    "isSpecial": false,
-                    "hasAsterisk": false,
-                    "isHappyHour": false,
-                    "stores": []
-                },
-                .......
-            ]
-        },
-        {
-            "name": "OtherStores",
-            "coupons": []
-        }
-    ]
-}
-```
+## Coupons
 
-#### Commandline-Tool
-
-Activate all available coupons
+List coupons:
 
 ```bash
-$ lidl-plus --language=de --country=AT --refresh-token=XXXXX coupon --all
+lidl-plus --language de --country AT coupon
 ```
 
-#### Python
+Activate every currently valid, inactive coupon:
+
+```bash
+lidl-plus --language de --country AT coupon --all
+```
+
+Python:
+
 ```python
 from lidlplus import LidlPlusApi
 
-lidl = LidlPlusApi("de", "AT", refresh_token="XXXXXXXXXX")
-for section in lidl.coupons()["sections"]:
-  for coupon in section["coupons"]:
-    print("found coupon: ", coupon["title"], coupon["id"])
+lidl = LidlPlusApi("de", "AT", refresh_token="...")
+coupons = lidl.coupons()
+
+for section in coupons.get("sections", []):
+    for coupon in section.get("promotions", []):
+        print(coupon["title"], coupon["id"])
+
+lidl.activate_coupon("coupon-id")
+lidl.deactivate_coupon("coupon-id")
 ```
 
-## Help
-#### Commandline-Tool
-```commandline
-Lidl Plus API
+Coupon calls use the current `/app/api` routes and send the required `Country` header.
 
-options:
-  -h, --help                show this help message and exit
-  -c CC, --country CC       country (DE, BE, NL, AT, ...)
-  -l LANG, --language LANG  language (de, en, fr, it, ...)
-  -u USER, --user USER      Lidl Plus login username
-  -p XXX, --password XXX    Lidl Plus login password
-  --2fa {phone,email}       choose two factor auth method
-  -r TOKEN, --refresh-token TOKEN
-                            refresh token to authenticate
-  --skip-verify             skip ssl verification
-  --not-accept-legal-terms  not auto accept legal terms updates
-  -d, --debug               debug mode
+## Development
 
-commands:
-  auth                      authenticate and get token
-  receipt                   output last receipts as json
-  coupon                    activate coupons
+```bash
+.venv/bin/python -m pytest
+.venv/bin/flake8 lidlplus tests setup.py --max-line-length=120
+.venv/bin/pylint --max-line-length=120 lidlplus
+.venv/bin/mypy lidlplus
+.venv/bin/black --check --line-length=120 lidlplus tests setup.py
+.venv/bin/python -m build
 ```
-
-

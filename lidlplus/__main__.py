@@ -1,24 +1,24 @@
 #!/usr/bin/env python3
-"""
-lidl plus command line tool
-"""
+"""Lidl Plus command-line tool."""
+
 import argparse
 import json
 import os
 import sys
+from datetime import datetime, timezone
 from getpass import getpass
 from pathlib import Path
-from datetime import datetime, timezone
 
-if __name__ == "__main__":
-    sys.path.insert(0, str(Path(__file__).parent.parent))
-# pylint: disable=wrong-import-position
+import requests
+
 from lidlplus import LidlPlusApi
-from lidlplus.exceptions import WebBrowserException, LoginError, LegalTermsException
+from lidlplus.exceptions import LegalTermsException, LoginError, WebBrowserException
+
+DEFAULT_TOKEN_FILE = Path.home() / ".config" / "lidl-plus" / "refresh_token"
 
 
 def get_arguments():
-    """Get parsed arguments."""
+    """Return parsed command-line arguments."""
     parser = argparse.ArgumentParser(
         prog="lidl-plus",
         description="Lidl Plus API",
@@ -32,171 +32,191 @@ def get_arguments():
         "--2fa",
         choices=["phone", "email"],
         default="phone",
-        help="choose two factor auth method",
+        help="choose two-factor authentication method",
     )
     parser.add_argument("-r", "--refresh-token", metavar="TOKEN", help="refresh token to authenticate")
-    parser.add_argument("--skip-verify", help="skip ssl verification", action="store_true")
+    parser.add_argument(
+        "--token-file",
+        type=Path,
+        default=DEFAULT_TOKEN_FILE,
+        help=f"read and update the refresh token in this file (default: {DEFAULT_TOKEN_FILE})",
+    )
     parser.add_argument(
         "--not-accept-legal-terms",
-        help="not auto accept legal terms updates",
+        help="do not automatically accept legal term updates",
         action="store_true",
     )
-    parser.add_argument("-d", "--debug", help="debug mode", action="store_true")
+    parser.add_argument(
+        "--headless",
+        help="run browser login headlessly (may be blocked by anti-bot checks)",
+        action="store_true",
+    )
 
-    subparser = parser.add_subparsers(title="commands", metavar="command", dest="command", required=True)
+    subparsers = parser.add_subparsers(title="commands", metavar="command", dest="command", required=True)
+    subparsers.add_parser("auth", help="authenticate and print the refresh token")
 
-    subparser.add_parser("auth", help="authenticate and print refresh_token")
-
-    subparser.add_parser("id", help="show loyalty ID")
-
-    receipt = subparser.add_parser("receipt", help="output last receipts as json")
+    receipt = subparsers.add_parser("receipt", help="save receipts as JSON and HTML")
     receipt.add_argument("-a", "--all", help="fetch all receipts", action="store_true")
+    receipt.add_argument("-n", "--limit", type=int, default=1, help="number of recent receipts to fetch")
+    receipt.add_argument("-o", "--output-dir", type=Path, default=Path("out"), help="output directory")
 
-    coupon = subparser.add_parser("coupon", help="activate coupons")
-    coupon.add_argument("-a", "--all", help="activate all coupons", action="store_true")
+    coupon = subparsers.add_parser("coupon", help="list or activate coupons")
+    coupon.add_argument("-a", "--all", help="activate every available coupon", action="store_true")
 
     return vars(parser.parse_args())
 
 
-def check_auth():
-    """check auth package is installed"""
-    try:
-        # pylint: disable=import-outside-toplevel, unused-import
-        import oic
-        import seleniumwire
-        import getuseragent
-        import webdriver_manager
-    except ImportError:
-        print(
-            "To login and receive a refresh token you need to install all auth requirements:\n"
-            '  pip install "lidl-plus[auth]"\n'
-            "You also need google chrome to be installed."
-        )
-        sys.exit(1)
+def _stored_refresh_token(args):
+    token = args.get("refresh_token")
+    token_file = args["token_file"].expanduser()
+    if token:
+        return token
+    if args["command"] != "auth" and token_file.is_file():
+        return token_file.read_text(encoding="utf-8").strip()
+    return ""
+
+
+def _save_refresh_token(api, token_file):
+    token = api.refresh_token
+    if not token:
+        return
+    path = token_file.expanduser()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(descriptor, "w", encoding="utf-8") as token_stream:
+        token_stream.write(f"{token}\n")
+    path.chmod(0o600)
 
 
 def lidl_plus_login(args):
-    """handle authentication"""
-    if not args.get("refresh_token"):
-        check_auth()
-    if args.get("skip_verify"):
-        os.environ["WDM_SSL_VERIFY"] = "0"
-        os.environ["CURL_CA_BUNDLE"] = ""
+    """Return an authenticated client."""
     language = args.get("language") or input("Enter your language (de, en, ...): ")
     country = args.get("country") or input("Enter your country (DE, AT, ...): ")
-    if args.get("refresh_token"):
-        return LidlPlusApi(language, country, args.get("refresh_token"))
-    login_method = input("Login with email or phone number? ([e]mail / [p]hone): ")
-    if login_method.lower() not in ["e", "p"]:
-        exit(1)
-    if login_method == "e":
-        username = args.get("user") or input("Enter your lidl plus username (email): ")
-    else:
-        username = args.get("user") or input("Enter your lidl plus phone number: ")
-    password = args.get("password") or getpass("Enter your lidl plus password: ")
-    lidl_plus = LidlPlusApi(language, country)
-    try:
-        text = f"Enter the verify code you received via {args['2fa']}: "
-        lidl_plus.login(
-            username,
-            password,
-            login_method,
-            verify_token_func=lambda: input(text),
-            verify_mode=args["2fa"],
-            headless=not args.get("debug"),
-            accept_legal_terms=not args.get("not_accept_legal_terms"),
-        )
-    except WebBrowserException:
-        print("Can't connect to web browser. Please install Chrome, Chromium or Firefox")
-        sys.exit(101)
-    except LoginError as error:
-        print(f"Login failed - {error}")
-        sys.exit(102)
-    except LegalTermsException as error:
-        print(f"Legal terms not accepted - {error}")
-        sys.exit(103)
-    return lidl_plus
+    refresh_token = _stored_refresh_token(args)
+    if refresh_token:
+        return LidlPlusApi(language, country, refresh_token)
+
+    login_method = input("Login with email or phone number? ([e]mail / [p]hone): ").lower()
+    if login_method not in {"e", "p"}:
+        raise LoginError('Login method must be "e" or "p"')
+
+    prompt = "Enter your Lidl Plus email: " if login_method == "e" else "Enter your Lidl Plus phone number: "
+    username = args.get("user") or input(prompt)
+    password = args.get("password") or getpass("Enter your Lidl Plus password: ")
+    api = LidlPlusApi(language, country)
+    verification_prompt = f"Enter the verification code you received via {args['2fa']}: "
+    api.login(
+        username,
+        password,
+        login_method,
+        verify_token_func=lambda: input(verification_prompt),
+        verify_mode=args["2fa"],
+        headless=args["headless"],
+        accept_legal_terms=not args["not_accept_legal_terms"],
+    )
+    return api
 
 
 def print_refresh_token(args):
-    """pretty print refresh token"""
-    lidl_plus = lidl_plus_login(args)
-    length = len(token := lidl_plus.refresh_token) - len("refresh token")
-    print(f"{'-' * (length // 2)} refresh token {'-' * (length // 2 - 1)}\n" f"{token}\n" f"{'-' * len(token)}")
-
-
-def print_loyalty_id(args):
-    """print loyalty ID"""
-    lidl_plus = lidl_plus_login(args)
-    print(lidl_plus.loyalty_id())
+    """Authenticate, save, and print the refresh token."""
+    api = lidl_plus_login(args)
+    _save_refresh_token(api, args["token_file"])
+    print(api.refresh_token)
 
 
 def save_tickets(args):
-    """pretty print as json"""
-    lidl_plus = lidl_plus_login(args)
+    """Save recent receipt details to disk."""
+    if args["limit"] < 1:
+        raise ValueError("--limit must be at least 1")
 
-    total_tickets = int(input("Number of tickets to download: "))
-    tickets = lidl_plus.tickets()
+    api = lidl_plus_login(args)
+    tickets = api.tickets()
+    selected = tickets if args["all"] else tickets[: args["limit"]]
+    output_dir = args["output_dir"]
+    output_dir.mkdir(parents=True, exist_ok=True)
 
-    downloaded_tickets = []
+    details = []
+    for summary in selected:
+        detail = api.ticket(summary["id"])
+        details.append(detail)
+        receipt_html = detail.get("htmlPrintedReceipt")
+        if receipt_html:
+            (output_dir / f"{summary['id']}.html").write_text(receipt_html, encoding="utf-8")
 
-    os.makedirs("out/", exist_ok=True)
-    for i in range(total_tickets):
-        try:
-            ticket = lidl_plus.ticket(tickets[i]["id"])
-            downloaded_tickets.append(ticket)
-            with open(f'out/{tickets[i]["id"]}.html', "w") as f:
-                f.write(ticket["htmlPrintedReceipt"])
-        except Exception as e:
-            print(f"Failed to download ticket {tickets[i]['id']}: {e}")
+    (output_dir / "summary.json").write_text(
+        json.dumps(details, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    _save_refresh_token(api, args["token_file"])
+    print(f"Saved {len(details)} receipt(s) to {output_dir}")
 
-    with open("out/summary.json", "w") as f:
-        f.write(json.dumps(downloaded_tickets))
-    print("Saved all tickets to out/ (as HTML) and all content to out/summary.json")
+
+def _parse_api_datetime(value):
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+
+def _available_coupon(coupon, now):
+    if coupon.get("isActivated"):
+        return False
+    validity = coupon.get("validity", {})
+    starts_at = validity.get("start")
+    ends_at = validity.get("end")
+    return (not starts_at or _parse_api_datetime(starts_at) <= now) and (
+        not ends_at or _parse_api_datetime(ends_at) >= now
+    )
+
 
 def activate_coupons(args):
-    """Activate all available coupons"""
-    lidl_plus = lidl_plus_login(args)
-    coupons = lidl_plus.coupons()
-    if not args.get("all"):
-        print(json.dumps(coupons, indent=4))
+    """List coupons or activate all currently available coupons."""
+    api = lidl_plus_login(args)
+    coupons = api.coupons()
+    if not args["all"]:
+        print(json.dumps(coupons, ensure_ascii=False, indent=2))
+        _save_refresh_token(api, args["token_file"])
         return
-    i = 0
-    for section in coupons.get("sections", {}):
-        for coupon in section.get("promotions", {}):
-            if coupon["isActivated"]:
-                continue
-            if datetime.fromisoformat(coupon["validity"]["start"]) > datetime.now(timezone.utc):
-                continue
-            if datetime.fromisoformat(coupon["validity"]["end"]) < datetime.now(timezone.utc):
-                continue
-            print("activating coupon: ", coupon["title"])
-            lidl_plus.activate_coupon(coupon["id"])
-            i += 1
-    print(f"Activated {i} coupons")
+
+    activated = 0
+    now = datetime.now(timezone.utc)
+    for section in coupons.get("sections", []):
+        for coupon in section.get("promotions", []):
+            if _available_coupon(coupon, now):
+                api.activate_coupon(coupon["id"])
+                activated += 1
+
+    _save_refresh_token(api, args["token_file"])
+    print(f"Activated {activated} coupon(s)")
 
 
 def main():
-    """argument commands"""
+    """Run the selected command."""
     args = get_arguments()
-    print(args) # TODO: quitar!
-
-    if args.get("command") == "auth":
+    if args["command"] == "auth":
         print_refresh_token(args)
-    elif args.get("command") == "id":
-        print_loyalty_id(args)
-    elif args.get("command") == "receipt":
+    elif args["command"] == "receipt":
         save_tickets(args)
-    elif args.get("command") == "coupon":
+    elif args["command"] == "coupon":
         activate_coupons(args)
 
 
 def start():
-    """wrapper for cmd tool"""
+    """Console entry point."""
     try:
         main()
     except KeyboardInterrupt:
-        print("Aborted.")
+        print("Aborted.", file=sys.stderr)
+    except WebBrowserException as error:
+        print(f"Browser login failed: {error}", file=sys.stderr)
+        raise SystemExit(101) from error
+    except LoginError as error:
+        print(f"Login failed: {error}", file=sys.stderr)
+        raise SystemExit(102) from error
+    except LegalTermsException as error:
+        print(f"Legal terms not accepted: {error}", file=sys.stderr)
+        raise SystemExit(103) from error
+    except (requests.RequestException, ValueError, KeyError) as error:
+        print(f"Request failed: {error}", file=sys.stderr)
+        raise SystemExit(104) from error
 
 
 if __name__ == "__main__":
