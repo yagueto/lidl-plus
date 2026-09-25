@@ -7,6 +7,9 @@ Its updates are based on reports from that repository's users and additional res
 > This unofficial package uses reverse-engineered Lidl Plus endpoints. It is not affiliated with Lidl, and private
 > endpoints can change without notice.
 
+> [!NOTE]
+> Working as of 25/09/2026
+
 Fetch digital receipts, list coupons, and activate or deactivate coupons from Python or the command line.
 
 Python 3.10 or newer is required.
